@@ -1,0 +1,16 @@
+# 依赖与生成文件
+node_modules/
+*.log
+.DS_Store
+
+# 编辑器与本地配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统文件
+Thumbs.db
+
+# Claude Code 内部说明，不上传到 GitHub
+CLAUDE.md

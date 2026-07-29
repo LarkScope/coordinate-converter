@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>两步路 → 高德 收藏点转换</title>
+<script src="https://webapi.amap.com/loader.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #333; height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+.header { background: #1a73e8; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.key-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.key-group label { font-size: 13px; opacity: 0.85; }
+.key-group input { padding: 6px 10px; border: none; border-radius: 4px; font-size: 13px; width: 320px; }
+.key-group button { padding: 6px 14px; border: none; border-radius: 4px; background: #fff; color: #1a73e8; font-size: 13px; cursor: pointer; font-weight: 600; }
+.key-group button:hover { background: #e8f0fe; }
+
+/* Main layout */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Left panel */
+.panel { width: 480px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid #ddd; background: #fff; }
+.panel-section { padding: 16px; border-bottom: 1px solid #eee; }
+.panel-section h3 { font-size: 14px; margin-bottom: 10px; color: #555; }
+
+/* Input area */
+textarea { width: 100%; height: 160px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: monospace; resize: vertical; }
+textarea:focus { outline: none; border-color: #1a73e8; }
+.input-actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
+.btn-primary { background: #1a73e8; color: #fff; }
+.btn-primary:hover { background: #1557b0; }
+.btn-primary:disabled { background: #a0c4f1; cursor: not-allowed; }
+.btn-secondary { background: #f0f0f0; color: #333; }
+.btn-secondary:hover { background: #e0e0e0; }
+.btn-success { background: #34a853; color: #fff; }
+.btn-success:hover { background: #2d8f47; }
+
+/* Points table */
+.points-container { flex: 1; overflow-y: auto; }
+.points-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.points-table th { background: #fafafa; padding: 8px 10px; text-align: left; font-weight: 600; color: #666; position: sticky; top: 0; }
+.points-table td { padding: 6px 10px; border-top: 1px solid #f0f0f0; vertical-align: middle; }
+.points-table tr:hover { background: #f8faff; }
+.name-input { width: 100%; border: 1px solid transparent; padding: 3px 6px; border-radius: 3px; font-size: 13px; background: transparent; }
+.name-input:focus { border-color: #1a73e8; background: #fff; outline: none; }
+.coord-text { font-family: monospace; font-size: 12px; color: #666; }
+.status-badge { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+.status-pending { background: #fff3cd; color: #856404; }
+.status-done { background: #d4edda; color: #155724; }
+.status-error { background: #f8d7da; color: #721c24; }
+.link-btn { font-size: 11px; color: #1a73e8; text-decoration: none; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.del-btn { color: #dc3545; cursor: pointer; font-size: 12px; border: none; background: none; padding: 2px 6px; }
+.del-btn:hover { background: #fce4e4; border-radius: 3px; }
+
+/* Export section */
+.export-section { padding: 12px 16px; background: #fafafa; border-top: 1px solid #eee; flex-shrink: 0; }
+
+/* Right panel - map */
+.map-panel { flex: 1; position: relative; }
+#map-container { width: 100%; height: 100%; }
+.map-overlay { position: absolute; top: 12px; right: 12px; z-index: 10; }
+.map-overlay .btn { box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+
+/* Progress bar */
+.progress-bar { height: 3px; background: #e0e0e0; width: 100%; }
+.progress-bar .fill { height: 100%; background: #1a73e8; transition: width 0.3s; width: 0; }
+
+/* Empty state */
+.empty-state { text-align: center; padding: 40px 20px; color: #999; }
+.empty-state p { font-size: 14px; }
+
+/* Info label */
+.info { font-size: 12px; color: #888; margin-top: 6px; }
+
+/* Toast */
+.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 20px; border-radius: 6px; font-size: 13px; z-index: 9999; opacity: 0; transition: opacity 0.3s; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>两步路 → 高德 收藏点</h1>
+  <div class="key-group">
+    <label>JS API Key:</label>
+    <input type="text" id="apiKey" placeholder="输入高德 JS API Key">
+    <button onclick="saveKey()">保存</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="panel">
+    <!-- Input section -->
+    <div class="panel-section">
+      <h3>粘贴坐标</h3>
+      <textarea id="coordInput" placeholder="每行一个坐标，格式：纬度,经度&#10;例如：&#10;33.672416, 103.490997&#10;39.908823, 116.397470 天安门（可选名称）"></textarea>
+      <div class="info">两步路坐标为 GCJ-02 坐标系，与高德一致，无需转换</div>
+      <div class="input-actions">
+        <button class="btn btn-primary" id="parseBtn" onclick="parseCoords()">解析坐标</button>
+        <button class="btn btn-secondary" onclick="clearAll()">清空</button>
+      </div>
+    </div>
+
+    <!-- Points list -->
+    <div class="panel-section" style="padding-bottom: 4px;">
+      <h3>点位列表 <span id="pointCount" style="color:#999;font-weight:normal;"></span></h3>
+    </div>
+    <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+    <div class="points-container" id="pointsContainer">
+      <div class="empty-state"><p>粘贴坐标后点击「解析坐标」</p></div>
+    </div>
+
+    <!-- Export section -->
+    <div class="export-section">
+      <div class="input-actions">
+        <button class="btn btn-primary" onclick="geocodeAll()" id="geocodeBtn" disabled>逆地理编码</button>
+        <button class="btn btn-success" onclick="exportKML()" id="kmlBtn" disabled>导出 KML</button>
+        <button class="btn btn-secondary" onclick="exportCSV()" id="csvBtn" disabled>导出 CSV</button>
+        <button class="btn btn-secondary" onclick="copyAllLinks()" id="linkBtn" disabled>复制全部链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div class="map-panel">
+    <div id="map-container"></div>
+    <div class="map-overlay">
+      <button class="btn btn-secondary" onclick="fitMapBounds()">适应全部点位</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// State
+let points = [];
+let AMap = null;
+let map = null;
+let geocoder = null;
+let markers = [];
+
+// Init: load saved key
+document.addEventListener('DOMContentLoaded', () => {
+  const savedKey = localStorage.getItem('amap_key');
+  if (savedKey) {
+    document.getElementById('apiKey').value = savedKey;
+    initMap(savedKey);
+  }
+});
+
+// Toast notification
+function showToast(msg, duration = 2000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// Save key & init map
+function saveKey() {
+  const key = document.getElementById('apiKey').value.trim();
+  if (!key) { showToast('请输入 API Key'); return; }
+  localStorage.setItem('amap_key', key);
+  initMap(key);
+  showToast('Key 已保存');
+}
+
+// Init Amap
+function initMap(key) {
+  if (map) return; // already init
+  AMapLoader.load({
+    key: key,
+    version: '2.0',
+    plugins: ['AMap.Geocoder']
+  }).then((AMapLib) => {
+    AMap = AMapLib;
+    map = new AMap.Map('map-container', {
+      zoom: 5,
+      center: [104.0, 35.0],
+      mapStyle: 'amap://styles/normal'
+    });
+    geocoder = new AMap.Geocoder({ radius: 1000, extensions: 'base' });
+    // If points already parsed, show them
+    if (points.length > 0) showPointsOnMap();
+  }).catch((e) => {
+    showToast('地图加载失败：' + e.message);
+  });
+}
+
+// Parse coordinates from textarea
+function parseCoords() {
+  const text = document.getElementById('coordInput').value.trim();
+  if (!text) { showToast('请输入坐标'); return; }
+
+  const lines = text.split('\n').filter(l => l.trim());
+  const newPoints = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Pattern: lat, lng [name]
+    const match = trimmed.match(/^([\d.]+)\s*[,\s]\s*([\d.]+)\s*(.*)$/);
+    if (!match) continue;
+
+    let val1 = parseFloat(match[1]);
+    let val2 = parseFloat(match[2]);
+    let name = match[3].trim() || '';
+
+    if (isNaN(val1) || isNaN(val2)) continue;
+
+    // Auto-detect: if val1 > 90, it's longitude (first value is lng)
+    let lat, lng;
+    if (val1 > 90) {
+      lng = val1; lat = val2;
+    } else {
+      lat = val1; lng = val2;
+    }
+
+    // Sanity check
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+
+    newPoints.push({ lat, lng, name, status: 'pending' });
+  }
+
+  if (newPoints.length === 0) {
+    showToast('未解析到有效坐标');
+    return;
+  }
+
+  points = newPoints;
+  showToast(`解析到 ${points.length} 个坐标点`);
+  renderTable();
+  updateButtons();
+  showPointsOnMap();
+}
+
+// Render points table
+function renderTable() {
+  const container = document.getElementById('pointsContainer');
+  document.getElementById('pointCount').textContent = points.length > 0 ? `(${points.length} 个点)` : '';
+
+  if (points.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>粘贴坐标后点击「解析坐标」</p></div>';
+    return;
+  }
+
+  let html = '<table class="points-table"><thead><tr>';
+  html += '<th>#</th><th>坐标</th><th>名称</th><th>状态</th><th>操作</th>';
+  html += '</tr></thead><tbody>';
+
+  points.forEach((p, i) => {
+    const statusClass = p.status === 'done' ? 'status-done' : p.status === 'error' ? 'status-error' : 'status-pending';
+    const statusText = p.status === 'done' ? '已编码' : p.status === 'error' ? '失败' : '待编码';
+    const uri = `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${encodeURIComponent(p.name || '点' + (i+1))}&coordinate=gaode&callnative=1`;
+
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td class="coord-text">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</td>
+      <td><input class="name-input" value="${escHtml(p.name)}" onchange="updateName(${i}, this.value)" placeholder="点击编码获取"></td>
+      <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+      <td>
+        <a class="link-btn" href="${uri}" target="amap-viewer" title="在高德地图中打开">打开</a>
+        <button class="del-btn" onclick="deletePoint(${i})" title="删除">✕</button>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function updateName(idx, val) {
+  points[idx].name = val;
+}
+
+function deletePoint(idx) {
+  points.splice(idx, 1);
+  renderTable();
+  updateButtons();
+  showPointsOnMap();
+}
+
+function clearAll() {
+  points = [];
+  document.getElementById('coordInput').value = '';
+  renderTable();
+  updateButtons();
+  clearMarkers();
+}
+
+function updateButtons() {
+  const has = points.length > 0;
+  document.getElementById('geocodeBtn').disabled = !has;
+  document.getElementById('kmlBtn').disabled = !has;
+  document.getElementById('csvBtn').disabled = !has;
+  document.getElementById('linkBtn').disabled = !has;
+}
+
+// Show points on map
+function showPointsOnMap() {
+  if (!map || !AMap) return;
+  clearMarkers();
+
+  points.forEach((p, i) => {
+    const marker = new AMap.Marker({
+      position: [p.lng, p.lat],
+      title: p.name || `点 ${i + 1}`,
+      label: {
+        content: `${i + 1}`,
+        direction: 'top'
+      }
+    });
+    map.add(marker);
+    markers.push(marker);
+  });
+
+  if (markers.length > 0) fitMapBounds();
+}
+
+function clearMarkers() {
+  if (map) {
+    markers.forEach(m => map.remove(m));
+  }
+  markers = [];
+}
+
+function fitMapBounds() {
+  if (!map || markers.length === 0) return;
+  map.setFitView(markers, false, [60, 60, 60, 60]);
+}
+
+// Reverse geocode all points
+async function geocodeAll() {
+  if (!geocoder) {
+    showToast('地图未加载，请先配置 API Key');
+    return;
+  }
+
+  const btn = document.getElementById('geocodeBtn');
+  btn.disabled = true;
+  btn.textContent = '编码中...';
+
+  const fill = document.getElementById('progressFill');
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    fill.style.width = `${((i + 1) / points.length) * 100}%`;
+
+    try {
+      const result = await reverseGeocode(p.lng, p.lat);
+      if (result) {
+        p.name = result;
+        p.status = 'done';
+      } else {
+        p.name = `点${i + 1}`;
+        p.status = 'error';
+      }
+    } catch (e) {
+      p.name = `点${i + 1}`;
+      p.status = 'error';
+    }
+
+    renderTable();
+
+    // Rate limit: 50ms between calls
+    if (i < points.length - 1) {
+      await sleep(80);
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '逆地理编码';
+  fill.style.width = '0';
+  showPointsOnMap();
+  showToast(`编码完成`);
+}
+
+function reverseGeocode(lng, lat) {
+  return new Promise((resolve) => {
+    geocoder.getAddress([lng, lat], (status, result) => {
+      if (status === 'complete' && result.info === 'OK') {
+        const addr = result.regeocode.addressComponent;
+        const name = (addr.province || '') + (addr.city || '') + (addr.district || '');
+        resolve(name || result.regeocode.formattedAddress);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// Export KML
+function exportKML() {
+  if (points.length === 0) return;
+
+  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  kml += '<kml xmlns="http://www.opengis.net/kml/2.2">\n';
+  kml += '<Document>\n';
+  kml += '  <name>两步路收藏点</name>\n';
+
+  points.forEach((p, i) => {
+    const name = p.name || `点 ${i + 1}`;
+    kml += '  <Placemark>\n';
+    kml += `    <name>${escXml(name)}</name>\n`;
+    kml += `    <description>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} (GCJ-02)</description>\n`;
+    kml += '    <Point>\n';
+    kml += `      <coordinates>${p.lng.toFixed(6)},${p.lat.toFixed(6)},0</coordinates>\n`;
+    kml += '    </Point>\n';
+    kml += '  </Placemark>\n';
+  });
+
+  kml += '</Document>\n</kml>';
+
+  downloadFile(kml, 'amap-markers.kml', 'application/vnd.google-earth.kml+xml');
+  showToast('KML 文件已下载');
+}
+
+// Export CSV
+function exportCSV() {
+  if (points.length === 0) return;
+
+  let csv = '\uFEFF名称,纬度,经度,高德URI链接\n';
+  points.forEach((p, i) => {
+    const name = p.name || `点${i + 1}`;
+    const uri = `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${encodeURIComponent(name)}&coordinate=gaode&callnative=1`;
+    csv += `${name},${p.lat.toFixed(6)},${p.lng.toFixed(6)},"${uri}"\n`;
+  });
+
+  downloadFile(csv, 'amap-markers.csv', 'text/csv;charset=utf-8');
+  showToast('CSV 文件已下载');
+}
+
+// Copy all URI links
+function copyAllLinks() {
+  if (points.length === 0) return;
+
+  const lines = points.map((p, i) => {
+    const name = p.name || `点${i + 1}`;
+    const uri = `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${encodeURIComponent(name)}&coordinate=gaode&callnative=1`;
+    return `${name}: ${uri}`;
+  });
+
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    showToast('链接已复制到剪贴板');
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = lines.join('\n');
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('链接已复制');
+  });
+}
+
+function escXml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
