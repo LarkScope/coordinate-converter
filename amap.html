@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>两步路 → 高德 收藏点转换</title>
+<title>坐标-高德转换器</title>
 <script src="https://webapi.amap.com/loader.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -17,6 +17,8 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .key-group input { padding: 6px 10px; border: none; border-radius: 4px; font-size: 13px; width: 320px; }
 .key-group button { padding: 6px 14px; border: none; border-radius: 4px; background: #fff; color: #1a73e8; font-size: 13px; cursor: pointer; font-weight: 600; }
 .key-group button:hover { background: #e8f0fe; }
+.key-help { color: #fff; font-size: 12px; opacity: 0.85; text-decoration: underline; white-space: nowrap; cursor: help; }
+.key-help:hover { opacity: 1; }
 
 /* Main layout */
 .main { display: flex; flex: 1; overflow: hidden; }
@@ -29,6 +31,9 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 /* Input area */
 textarea { width: 100%; height: 160px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: monospace; resize: vertical; }
 textarea:focus { outline: none; border-color: #1a73e8; }
+.coord-sys-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: #555; }
+.coord-sys-row select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; background: #fff; cursor: pointer; }
+.coord-sys-row select:focus { outline: none; border-color: #1a73e8; }
 .input-actions { display: flex; gap: 8px; margin-top: 10px; }
 .btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
 .btn-primary { background: #1a73e8; color: #fff; }
@@ -85,11 +90,13 @@ textarea:focus { outline: none; border-color: #1a73e8; }
 <body>
 
 <div class="header">
-  <h1>两步路 → 高德 收藏点</h1>
+  <h1>坐标 → 高德 收藏点</h1>
   <div class="key-group">
     <label>JS API Key:</label>
     <input type="text" id="apiKey" placeholder="输入高德 JS API Key">
     <button onclick="saveKey()">保存</button>
+    <button onclick="clearKey()">清除</button>
+    <a class="key-help" href="https://console.amap.com/dev/key/app" target="_blank" rel="noopener" title="获取 Key：1. 打开高德控制台「应用管理」页（即本链接）并注册/登录&#10;2. 点击「创建新应用」，填写应用名称和类型&#10;3. 在应用上点「添加 Key」，服务平台选「Web 端 (JS API)」&#10;4. 复制 Key 粘贴到此处，仅保存在浏览器本地">如何获取 Key？</a>
   </div>
 </div>
 
@@ -99,7 +106,15 @@ textarea:focus { outline: none; border-color: #1a73e8; }
     <div class="panel-section">
       <h3>粘贴坐标</h3>
       <textarea id="coordInput" placeholder="每行一个坐标，格式：纬度,经度&#10;例如：&#10;33.672416, 103.490997&#10;39.908823, 116.397470 天安门（可选名称）"></textarea>
-      <div class="info">两步路坐标为 GCJ-02 坐标系，与高德一致，无需转换</div>
+      <div class="coord-sys-row">
+        <label for="coordSys">坐标系：</label>
+        <select id="coordSys">
+          <option value="wgs84" selected>WGS84（GPS 原始坐标）</option>
+          <option value="gcj02">GCJ-02（高德 / 两步路）</option>
+          <option value="bd09">BD09（百度）</option>
+        </select>
+      </div>
+      <div class="info">解析时会将所选坐标系自动转换为高德 GCJ-02</div>
       <div class="input-actions">
         <button class="btn btn-primary" id="parseBtn" onclick="parseCoords()">解析坐标</button>
         <button class="btn btn-secondary" onclick="clearAll()">清空</button>
@@ -171,6 +186,13 @@ function saveKey() {
   showToast('Key 已保存');
 }
 
+// Clear saved key
+function clearKey() {
+  localStorage.removeItem('amap_key');
+  document.getElementById('apiKey').value = '';
+  showToast('已清除本地保存的 Key，刷新后生效');
+}
+
 // Init Amap
 function initMap(key) {
   if (map) return; // already init
@@ -193,6 +215,59 @@ function initMap(key) {
   });
 }
 
+// Coordinate conversion to GCJ-02 (Amap's native system)
+const X_PI = Math.PI * 3000.0 / 180.0;
+const PI = Math.PI;
+const EARTH_A = 6378245.0;
+const EARTH_EE = 0.00669342162296594323;
+
+function outOfChina(lng, lat) {
+  return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+
+function transformLat(lng, lat) {
+  let ret = -100.0 + 2.0 * lng + 3.0 * lat + 0.2 * lat * lat + 0.1 * lng * lat + 0.2 * Math.sqrt(Math.abs(lng));
+  ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(lat * PI) + 40.0 * Math.sin(lat / 3.0 * PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(lat / 12.0 * PI) + 320 * Math.sin(lat * PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+
+function transformLng(lng, lat) {
+  let ret = 300.0 + lng + 2.0 * lat + 0.1 * lng * lng + 0.1 * lng * lat + 0.1 * Math.sqrt(Math.abs(lng));
+  ret += (20.0 * Math.sin(6.0 * lng * PI) + 20.0 * Math.sin(2.0 * lng * PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(lng * PI) + 40.0 * Math.sin(lng / 3.0 * PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(lng / 12.0 * PI) + 300.0 * Math.sin(lng / 30.0 * PI)) * 2.0 / 3.0;
+  return ret;
+}
+
+function wgs84ToGcj02(lng, lat) {
+  if (outOfChina(lng, lat)) return [lng, lat];
+  let dlat = transformLat(lng - 105.0, lat - 35.0);
+  let dlng = transformLng(lng - 105.0, lat - 35.0);
+  const radlat = lat / 180.0 * PI;
+  let magic = Math.sin(radlat);
+  magic = 1 - EARTH_EE * magic * magic;
+  const sqrtmagic = Math.sqrt(magic);
+  dlat = (dlat * 180.0) / ((EARTH_A * (1 - EARTH_EE)) / (magic * sqrtmagic) * PI);
+  dlng = (dlng * 180.0) / (EARTH_A / sqrtmagic * Math.cos(radlat) * PI);
+  return [lng + dlng, lat + dlat];
+}
+
+function bd09ToGcj02(bdLng, bdLat) {
+  const x = bdLng - 0.0065;
+  const y = bdLat - 0.006;
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * X_PI);
+  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * X_PI);
+  return [z * Math.cos(theta), z * Math.sin(theta)];
+}
+
+function toGcj02(lng, lat, sys) {
+  if (sys === 'wgs84') return wgs84ToGcj02(lng, lat);
+  if (sys === 'bd09') return bd09ToGcj02(lng, lat);
+  return [lng, lat];
+}
+
 // Parse coordinates from textarea
 function parseCoords() {
   const text = document.getElementById('coordInput').value.trim();
@@ -200,6 +275,7 @@ function parseCoords() {
 
   const lines = text.split('\n').filter(l => l.trim());
   const newPoints = [];
+  const coordSys = document.getElementById('coordSys').value;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -223,6 +299,9 @@ function parseCoords() {
 
     // Sanity check
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
+
+    // Convert selected coordinate system to GCJ-02
+    [lng, lat] = toGcj02(lng, lat, coordSys);
 
     newPoints.push({ lat, lng, name, status: 'pending' });
   }
@@ -409,7 +488,7 @@ function exportKML() {
   let kml = '<?xml version="1.0" encoding="UTF-8"?>\n';
   kml += '<kml xmlns="http://www.opengis.net/kml/2.2">\n';
   kml += '<Document>\n';
-  kml += '  <name>两步路收藏点</name>\n';
+  kml += '  <name>坐标收藏点</name>\n';
 
   points.forEach((p, i) => {
     const name = p.name || `点 ${i + 1}`;
